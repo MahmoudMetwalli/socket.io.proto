@@ -5,36 +5,35 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const socket_io_client_1 = require("socket.io-client");
 const readline_1 = __importDefault(require("readline"));
-// Create a Socket.io client instance
-const socket = (0, socket_io_client_1.io)("http://localhost:3001");
-// Create readline interface for terminal input
+const protobufjs_1 = __importDefault(require("protobufjs"));
+const socket = (0, socket_io_client_1.io)("http://localhost:3001", { autoConnect: false });
 const rl = readline_1.default.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
 });
-// Handle connection events
+let ChatMessage;
+protobufjs_1.default.load("message.proto").then(root => {
+    ChatMessage = root.lookupType("ChatMessage");
+    socket.connect();
+}).catch(err => {
+    console.error("Failed to load protobuf schema:", err);
+    process.exit(1);
+});
 socket.on("connect", () => {
     console.log(`\x1b[32m✓ Connected to server. Socket ID: ${socket.id}\x1b[0m`);
     promptUser();
 });
-socket.on("disconnect", () => {
-    console.log("\x1b[31m✗ Disconnected from server\x1b[0m");
-});
-// Handle incoming messages
-socket.on("message", (data) => {
-    // Clear the current line if we're in the middle of typing
+socket.on("message", (buffer) => {
+    const data = ChatMessage.decode(Buffer.from(buffer));
     readline_1.default.clearLine(process.stdout, 0);
     readline_1.default.cursorTo(process.stdout, 0);
-    // Only show messages from others, not our own
     if (data.socketId !== socket.id) {
         const sender = data.sender || data.socketId || "Unknown";
         console.log(`\x1b[34m${sender}:\x1b[0m ${data.text}`);
     }
-    // Re-display the prompt
     rl.prompt(true);
 });
-// Function to prompt user for input
 function promptUser() {
     rl.question("\x1b[33m> \x1b[0m", (input) => {
         if (input.toLowerCase() === "exit" || input.toLowerCase() === "quit") {
@@ -44,20 +43,25 @@ function promptUser() {
             process.exit(0);
         }
         else if (input.trim()) {
-            // Send the message
             const messageData = {
                 text: input,
                 sender: `Terminal Client (${socket.id ? socket.id.substring(0, 6) : 'unknown'})`,
                 socketId: socket.id,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
             };
-            socket.emit("message", messageData);
+            const errMsg = ChatMessage.verify(messageData);
+            if (errMsg) {
+                console.error("Invalid message:", errMsg);
+                promptUser();
+                return;
+            }
+            const message = ChatMessage.create(messageData);
+            const buffer = ChatMessage.encode(message).finish();
+            socket.emit("message", buffer);
         }
-        // Continue prompting
         promptUser();
     });
 }
-// Handle CTRL+C to properly clean up
 rl.on("SIGINT", () => {
     console.log("\nClosing connection and exiting...");
     socket.disconnect();
