@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+message ChatMessage {
+  string text = 1;
+  string sender = 2;
+  string socketId = 3;
+  string timestamp = 4;
+}
